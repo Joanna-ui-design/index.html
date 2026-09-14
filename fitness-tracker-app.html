@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XIAO Fitness Tracker</title>
+<style>
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #0d0d0f;
+    color: #f5f5f7;
+    margin: 0;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  #status {
+    font-size: 14px;
+    color: #999;
+    margin-bottom: 24px;
+  }
+  #status.connected { color: #34c759; }
+  #status.error { color: #ff453a; }
+
+  button {
+    background: #0a84ff;
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px 28px;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 32px;
+  }
+  button:disabled { opacity: 0.5; }
+
+  .card {
+    background: #1c1c1e;
+    border-radius: 16px;
+    padding: 20px 24px;
+    width: 100%;
+    max-width: 360px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+  }
+  .card-label {
+    font-size: 13px;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .step-count {
+    font-size: 48px;
+    font-weight: 700;
+    color: #0a84ff;
+  }
+  .accel-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 15px;
+    padding: 4px 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .accel-row span:first-child { color: #999; }
+</style>
+</head>
+<body>
+
+<h1>XIAO Fitness Tracker</h1>
+<div id="status">Not connected</div>
+<button id="connectBtn">Connect to Device</button>
+
+<div class="card">
+  <div class="card-label">Steps</div>
+  <div class="step-count" id="stepCount">0</div>
+</div>
+
+<div class="card">
+  <div class="card-label">Acceleration (g)</div>
+  <div class="accel-row"><span>X</span><span id="accelX">0.00</span></div>
+  <div class="accel-row"><span>Y</span><span id="accelY">0.00</span></div>
+  <div class="accel-row"><span>Z</span><span id="accelZ">0.00</span></div>
+</div>
+
+<script>
+  // Must match the UUIDs in FitnessTrackerBLE.ino exactly
+  const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+  const ACCEL_CHAR_UUID = '19b10001-e8f2-537e-4f6c-d104768a1214';
+  const STEP_CHAR_UUID = '19b10002-e8f2-537e-4f6c-d104768a1214';
+
+  const statusEl = document.getElementById('status');
+  const connectBtn = document.getElementById('connectBtn');
+  const stepCountEl = document.getElementById('stepCount');
+  const accelXEl = document.getElementById('accelX');
+  const accelYEl = document.getElementById('accelY');
+  const accelZEl = document.getElementById('accelZ');
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = cls || '';
+  }
+
+  async function connect() {
+    if (!navigator.bluetooth) {
+      setStatus('Web Bluetooth not supported in this browser. Use Bluefy on iOS.', 'error');
+      return;
+    }
+
+    try {
+      connectBtn.disabled = true;
+      setStatus('Scanning...');
+
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: 'XIAO-Fitness' }],
+        optionalServices: [SERVICE_UUID]
+      });
+
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+
+      setStatus('Connecting...');
+      const server = await device.gatt.connect();
+
+      const service = await server.getPrimaryService(SERVICE_UUID);
+
+      const accelChar = await service.getCharacteristic(ACCEL_CHAR_UUID);
+      const stepChar = await service.getCharacteristic(STEP_CHAR_UUID);
+
+      await accelChar.startNotifications();
+      accelChar.addEventListener('characteristicvaluechanged', handleAccelData);
+
+      await stepChar.startNotifications();
+      stepChar.addEventListener('characteristicvaluechanged', handleStepData);
+
+      // grab initial values too, not just future notifications
+      const initialAccel = await accelChar.readValue();
+      handleAccelData({ target: { value: initialAccel } });
+
+      const initialStep = await stepChar.readValue();
+      handleStepData({ target: { value: initialStep } });
+
+      setStatus('Connected to ' + device.name, 'connected');
+      connectBtn.textContent = 'Connected';
+    } catch (err) {
+      console.error(err);
+      setStatus('Error: ' + err.message, 'error');
+      connectBtn.disabled = false;
+    }
+  }
+
+  function handleAccelData(event) {
+    const value = event.target.value; // DataView, 12 bytes = 3 little-endian floats
+    const x = value.getFloat32(0, true);
+    const y = value.getFloat32(4, true);
+    const z = value.getFloat32(8, true);
+
+    accelXEl.textContent = x.toFixed(2);
+    accelYEl.textContent = y.toFixed(2);
+    accelZEl.textContent = z.toFixed(2);
+  }
+
+  function handleStepData(event) {
+    const value = event.target.value; // DataView, 4 bytes = uint32
+    const steps = value.getUint32(0, true);
+    stepCountEl.textContent = steps;
+  }
+
+  function onDisconnected() {
+    setStatus('Disconnected', 'error');
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Reconnect';
+  }
+
+  connectBtn.addEventListener('click', connect);
+</script>
+
+</body>
+</html>
